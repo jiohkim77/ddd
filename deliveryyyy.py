@@ -1,12 +1,9 @@
-
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import networkx as nx
 import time
 import random
 import math
@@ -214,18 +211,6 @@ class BiologicalNetworkSimulator:
                     'transport_type': 'xylem'
                 })
         
-        # 잎 -> 줄기 (체관)
-        for leaf in leaf_nodes:
-            nearest_stem = min(stem_nodes, 
-                             key=lambda s: abs(s['x'] - leaf['x']) + abs(s['y'] - leaf['y']))
-            connections.append({
-                'from': leaf['id'],
-                'to': nearest_stem['id'],
-                'capacity': 40,
-                'efficiency': 0.85,
-                'transport_type': 'phloem'
-            })
-        
         return connections
     
     def _create_neural_connections(self, nodes):
@@ -289,29 +274,6 @@ class BiologicalNetworkSimulator:
                     'capacity': 60,
                     'efficiency': 0.8,
                     'transport_type': 'arterial'
-                })
-        
-        # 모세혈관 -> 정맥
-        for capillary in capillary_nodes:
-            nearest_vein = min(vein_nodes,
-                             key=lambda v: abs(v['x'] - capillary['x']) + abs(v['y'] - capillary['y']))
-            connections.append({
-                'from': capillary['id'],
-                'to': nearest_vein['id'],
-                'capacity': 40,
-                'efficiency': 0.75,
-                'transport_type': 'venous'
-            })
-        
-        # 정맥 -> 심장
-        for vein in vein_nodes:
-            for heart in heart_nodes:
-                connections.append({
-                    'from': vein['id'],
-                    'to': heart['id'],
-                    'capacity': 80,
-                    'efficiency': 0.85,
-                    'transport_type': 'venous'
                 })
         
         return connections
@@ -391,7 +353,7 @@ class BiologicalNetworkSimulator:
             pathway_efficiency.append(actual_transport / energy_used if energy_used > 0 else 0)
         
         # 성능 지표 계산
-        utilization_rate = (total_transported / (self.params['nutrient_concentration'] * len(connections))) * 100
+        utilization_rate = (total_transported / (self.params['nutrient_concentration'] * len(connections))) * 100 if connections else 0
         energy_efficiency = total_transported / total_energy_used if total_energy_used > 0 else 0
         avg_speed = total_transported / total_time if total_time > 0 else 0
         throughput = total_transported / (self.params['simulation_time'] / 60) if self.params['simulation_time'] > 0 else 0
@@ -436,7 +398,7 @@ def create_network_visualization(result):
             y=[from_node['y'], to_node['y']],
             mode='lines',
             line=dict(
-                width=conn['capacity'] / 20,
+                width=max(1, conn['capacity'] / 20),
                 color=f"rgba(100, 150, 200, {conn['efficiency']})"
             ),
             showlegend=False,
@@ -452,16 +414,16 @@ def create_network_visualization(result):
             y=[n['y'] for n in type_nodes],
             mode='markers+text',
             marker=dict(
-                size=[n['capacity']/4 for n in type_nodes],
+                size=[max(8, n['capacity']/4) for n in type_nodes],
                 color=[color_map.get(n['type'], '#666666') for n in type_nodes],
                 line=dict(width=2, color='white'),
                 opacity=[0.3 if n['is_damaged'] else 1.0 for n in type_nodes]
             ),
-            text=[f"{n['type']}<br>{n['capacity']:.1f}" for n in type_nodes],
+            text=[f"{n['type']}" for n in type_nodes],
             textposition="middle center",
             name=node_type.title(),
-            hovertemplate="<b>%{text}</b><br>효율성: %{customdata:.2f}<extra></extra>",
-            customdata=[n['efficiency'] for n in type_nodes]
+            hovertemplate="<b>%{text}</b><br>용량: %{customdata:.1f}<br>효율성: %{marker.opacity:.2f}<extra></extra>",
+            customdata=[n['capacity'] for n in type_nodes]
         ))
     
     fig.update_layout(
@@ -469,7 +431,7 @@ def create_network_visualization(result):
         xaxis_title="X 좌표",
         yaxis_title="Y 좌표",
         showlegend=True,
-        height=600,
+        height=500,
         plot_bgcolor='rgba(0,0,0,0)',
         xaxis=dict(range=[0, 100]),
         yaxis=dict(range=[0, 100])
@@ -490,38 +452,47 @@ def create_performance_comparison(results):
         rows=2, cols=3,
         subplot_titles=metric_names,
         specs=[[{"type": "bar"}, {"type": "bar"}, {"type": "bar"}],
-               [{"type": "bar"}, {"type": "bar"}, {"type": "xy"}]]
+               [{"type": "bar"}, {"type": "bar"}, {"type": "scatterpolar"}]]
     )
     
     network_names = list(results.keys())
     colors = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0', '#F44336']
     
     for i, (metric, name) in enumerate(zip(metrics, metric_names)):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        
-        if i < 5:  # 바 차트
-            values = [results[net][metric] for net in network_names]
-            fig.add_trace(
-                go.Bar(
-                    x=network_names,
-                    y=values,
-                    name=name,
-                    marker_color=colors[i % len(colors)],
-                    showlegend=False
-                ),
-                row=row, col=col
-            )
+        if i < 5:
+            row = (i // 3) + 1
+            col = (i % 3) + 1
+            
+            if i < 5:  # 바 차트
+                values = [results[net][metric] for net in network_names]
+                fig.add_trace(
+                    go.Bar(
+                        x=network_names,
+                        y=values,
+                        name=name,
+                        marker_color=colors[i % len(colors)],
+                        showlegend=False
+                    ),
+                    row=row, col=col
+                )
     
     # 레이더 차트 추가 (마지막 서브플롯)
     categories = ['이용률', '에너지효율', '속도', '처리량', '견고성']
     
     for i, network in enumerate(network_names):
+        max_values = {
+            'utilization_rate': max([results[n]['utilization_rate'] for n in network_names]),
+            'energy_efficiency': max([results[n]['energy_efficiency'] for n in network_names]),
+            'avg_speed': max([results[n]['avg_speed'] for n in network_names]),
+            'throughput': max([results[n]['throughput'] for n in network_names]),
+            'network_robustness': 1.0
+        }
+        
         values = [
-            results[network]['utilization_rate'] / 100,
-            results[network]['energy_efficiency'] / max([results[n]['energy_efficiency'] for n in network_names]),
-            results[network]['avg_speed'] / max([results[n]['avg_speed'] for n in network_names]),
-            results[network]['throughput'] / max([results[n]['throughput'] for n in network_names]),
+            results[network]['utilization_rate'] / max(1, max_values['utilization_rate']),
+            results[network]['energy_efficiency'] / max(1, max_values['energy_efficiency']),
+            results[network]['avg_speed'] / max(1, max_values['avg_speed']),
+            results[network]['throughput'] / max(1, max_values['throughput']),
             results[network]['network_robustness']
         ]
         
@@ -537,7 +508,7 @@ def create_performance_comparison(results):
         )
     
     fig.update_layout(
-        height=800,
+        height=700,
         title_text="네트워크 성능 종합 비교",
         showlegend=True
     )
@@ -607,7 +578,7 @@ if run_simulation:
             st.metric("⚡ 에너지 효율성", f"{results[best_network]['energy_efficiency']:.2f}")
         
         with col4:
-            st.metric("🔋 네트워크 견고성", f"{results[best_network]['network_robustness']:.1f}")
+            st.metric("🔋 네트워크 견고성", f"{results[best_network]['network_robustness']:.2f}")
     
     # 결과 테이블
     st.subheader("📋 성능 비교 결과")
@@ -644,11 +615,10 @@ if run_simulation:
         st.plotly_chart(fig_network, use_container_width=True)
     else:
         # 다중 네트워크
-        cols = st.columns(2)
-        for i, (net_name, result) in enumerate(results.items()):
-            with cols[i % 2]:
-                fig_network = create_network_visualization(result)
-                st.plotly_chart(fig_network, use_container_width=True)
+        for net_name, result in results.items():
+            st.write(f"### {net_name}")
+            fig_network = create_network_visualization(result)
+            st.plotly_chart(fig_network, use_container_width=True)
     
     # 분석 및 인사이트
     st.subheader("🔬 생물학적 분석 및 인사이트")
@@ -784,110 +754,51 @@ if run_simulation:
         - 손상된 네트워크는 우회 경로 활용 필요
         - 균사체와 순환계가 손상에 가장 강함
         """)
-    
-    # 실험 제안
-    st.subheader("🧪 추가 실험 아이디어")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info("""
-        **🔬 심화 실험**
-        
-        1. **스트레스 반응 시뮬레이션**
-           - 갑작스러운 환경 변화
-           - 병원균 침입 상황
-           - 영양분 부족 상태
-        
-        2. **최적화 실험**
-           - 네트워크 구조 개선
-           - 에너지 소비 최소화
-           - 전달 속도 최대화
-        
-        3. **진화 시뮬레이션**
-           - 세대별 네트워크 진화
-           - 환경 적응 과정
-           - 선택압에 따른 변화
-        """)
-    
-    with col2:
-        st.success("""
-        **🌱 실제 응용 분야**
-        
-        1. **농업 기술**
-           - 스마트팜 관개 시스템
-           - 식물 영양 상태 모니터링
-           - 작물 품종 개량
-        
-        2. **의학 연구**
-           - 약물 전달 시스템
-           - 혈관 질환 치료
-           - 신경 재생 치료
-        
-        3. **바이오미메틱스**
-           - 효율적 배송 네트워크
-           - 자가 치유 재료
-           - 적응형 통신 시스템
-        """)
 
-# 실시간 모니터링 (옵션)
-if st.sidebar.checkbox("실시간 모니터링 모드"):
-    st.subheader("📡 실시간 영양분 전달 모니터링")
+# 실험 제안
+st.subheader("🧪 추가 실험 아이디어")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.info("""
+    **🔬 심화 실험**
     
-    # 실시간 데이터 플레이스홀더
-    chart_placeholder = st.empty()
-    metric_placeholder = st.empty()
+    1. **스트레스 반응 시뮬레이션**
+       - 갑작스러운 환경 변화
+       - 병원균 침입 상황
+       - 영양분 부족 상태
     
-    if st.sidebar.button("모니터링 시작"):
-        for i in range(20):  # 20초간 모니터링
-            # 실시간 데이터 생성
-            time_data = list(range(max(0, i-10), i+1))
-            
-            # 각 네트워크의 실시간 성능
-            real_time_data = {}
-            for net_type in ["관다발계 (식물)", "신경계 (동물)", "순환계 (동물)", "균사체 (균류)"]:
-                real_time_data[net_type] = [
-                    random.uniform(50, 100) + random.uniform(-10, 10) for _ in time_data
-                ]
-            
-            # 실시간 차트 업데이트
-            fig_realtime = go.Figure()
-            colors = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0']
-            
-            for j, (net_type, data) in enumerate(real_time_data.items()):
-                fig_realtime.add_trace(go.Scatter(
-                    x=time_data,
-                    y=data,
-                    mode='lines+markers',
-                    name=net_type.split(' ')[0],
-                    line=dict(color=colors[j], width=3)
-                ))
-            
-            fig_realtime.update_layout(
-                title="실시간 영양분 전달 효율성",
-                xaxis_title="시간 (초)",
-                yaxis_title="전달 효율성 (%)",
-                height=400
-            )
-            
-            chart_placeholder.plotly_chart(fig_realtime, use_container_width=True)
-            
-            # 실시간 메트릭
-            current_values = {k: v[-1] for k, v in real_time_data.items()}
-            best_current = max(current_values, key=current_values.get)
-            
-            with metric_placeholder.container():
-                cols = st.columns(4)
-                for idx, (net, value) in enumerate(current_values.items()):
-                    with cols[idx]:
-                        delta = random.uniform(-5, 5)
-                        st.metric(
-                            net.split(' ')[0],
-                            f"{value:.1f}%",
-                            f"{delta:+.1f}%"
-                        )
-            
-            time.sleep(1)
+    2. **최적화 실험**
+       - 네트워크 구조 개선
+       - 에너지 소비 최소화
+       - 전달 속도 최대화
+    
+    3. **진화 시뮬레이션**
+       - 세대별 네트워크 진화
+       - 환경 적응 과정
+       - 선택압에 따른 변화
+    """)
+
+with col2:
+    st.success("""
+    **🌱 실제 응용 분야**
+    
+    1. **농업 기술**
+       - 스마트팜 관개 시스템
+       - 식물 영양 상태 모니터링
+       - 작물 품종 개량
+    
+    2. **의학 연구**
+       - 약물 전달 시스템
+       - 혈관 질환 치료
+       - 신경 재생 치료
+    
+    3. **바이오미메틱스**
+       - 효율적 배송 네트워크
+       - 자가 치유 재료
+       - 적응형 통신 시스템
+    """)
 
 # 데이터 내보내기
 if 'results' in locals() and results:
